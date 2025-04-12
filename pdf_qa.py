@@ -1,58 +1,36 @@
 import os
-from typing import List, Optional
+from typing import List
 import requests
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from sentence_transformers import SentenceTransformer
 import numpy as np
-import json
 
 
 class PDFQuestionAnswering:
     def __init__(self, pdf_path: str, chunk_size: int = 1000):
-        """
-        Initialize the PDF Question Answering system.
-
-        Args:
-            pdf_path (str): Path to the PDF file
-            chunk_size (int): Size of text chunks for processing
-        """
-        # Load environment variables from .env file
+        """Initialize the PDF Question Answering system."""
         load_dotenv()
 
-        # Get API key
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
 
-        # API endpoint for Gemini 2.0 Flash
         self.api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-
-        # Initialize sentence transformer for embeddings
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        # Load and process the PDF
+        # Process PDF and create embeddings
         self.text_chunks = self._process_pdf(pdf_path, chunk_size)
-        self.embeddings = self._create_embeddings()
+        self.embeddings = self.embedding_model.encode(self.text_chunks)
 
     def _process_pdf(self, pdf_path: str, chunk_size: int) -> List[str]:
-        """
-        Process the PDF file and split it into chunks.
-
-        Args:
-            pdf_path (str): Path to the PDF file
-            chunk_size (int): Size of text chunks
-
-        Returns:
-            List[str]: List of text chunks
-        """
+        """Process the PDF file and split it into chunks."""
         if not os.path.exists(pdf_path):
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
+        # Extract text from PDF
         pdf_reader = PdfReader(pdf_path)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
+        text = " ".join(page.extract_text() for page in pdf_reader.pages)
 
         # Split text into chunks
         words = text.split()
@@ -74,41 +52,15 @@ class PDFQuestionAnswering:
 
         return chunks
 
-    def _create_embeddings(self) -> np.ndarray:
-        """
-        Create embeddings for all text chunks.
-
-        Returns:
-            np.ndarray: Array of embeddings
-        """
-        return self.embedding_model.encode(self.text_chunks)
-
     def _get_relevant_chunks(self, question: str, top_k: int = 3) -> List[str]:
-        """
-        Get the most relevant text chunks for a given question.
-
-        Args:
-            question (str): The question to find relevant chunks for
-            top_k (int): Number of chunks to return
-
-        Returns:
-            List[str]: List of most relevant text chunks
-        """
+        """Get the most relevant text chunks for a given question."""
         question_embedding = self.embedding_model.encode([question])[0]
         similarities = np.dot(self.embeddings, question_embedding)
         top_indices = np.argsort(similarities)[-top_k:][::-1]
         return [self.text_chunks[i] for i in top_indices]
 
     def ask_question(self, question: str) -> str:
-        """
-        Ask a question about the PDF content.
-
-        Args:
-            question (str): The question to ask
-
-        Returns:
-            str: The answer from the model
-        """
+        """Ask a question about the PDF content."""
         if not question or not isinstance(question, str):
             raise ValueError("Question must be a non-empty string")
 
@@ -127,14 +79,12 @@ class PDFQuestionAnswering:
         Question: {question}
         """
 
-        # Prepare the request payload
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
         # Make API request
-        request_url = f"{self.api_url}?key={self.api_key}"
-
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
         response = requests.post(
-            request_url, headers={"Content-Type": "application/json"}, json=payload
+            f"{self.api_url}?key={self.api_key}",
+            headers={"Content-Type": "application/json"},
+            json=payload,
         )
 
         # Check for errors
@@ -143,15 +93,14 @@ class PDFQuestionAnswering:
             raise Exception(f"API request failed: {error_msg}")
 
         # Extract and return the response text
-        response_json = response.json()
         try:
-            return response_json["candidates"][0]["content"]["parts"][0]["text"]
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as e:
             raise Exception(f"Unexpected API response format: {str(e)}")
 
 
 def main():
-    # Example usage
+    """Main function to run the PDF QA system."""
     load_dotenv()
 
     if os.getenv("GEMINI_API_KEY") is None:
